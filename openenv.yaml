@@ -1,0 +1,152 @@
+name: aevis-retinal-screening
+version: "1.0.0"
+description: >
+  AI-powered retinal disease screening environment.
+  Simulates the AEVIS portable fundus camera system for early detection
+  of diabetic retinopathy, glaucoma, and macular degeneration.
+
+author: AEVIS Team
+tags:
+  - medical
+  - retinal-screening
+  - computer-vision
+  - healthcare
+  - AI-diagnostics
+
+environment:
+  class: AEVISEnv
+  module: env.aevis_env
+  max_steps: 1
+  seed: 42
+
+tasks:
+  - id: easy
+    name: Binary screening
+    difficulty: easy
+    description: >
+      Given a retinal scan description and patient metadata,
+      decide whether the patient should be referred for further
+      examination or classified as normal.
+    objective: Maximise sensitivity while maintaining specificity
+    grader: grade_task1
+    grader_module: env.graders
+    score_range: [0.0, 1.0]
+    action_space:
+      screening_result:
+        type: string
+        enum: [normal, refer]
+
+  - id: medium
+    name: DR severity grading
+    difficulty: medium
+    description: >
+      Classify the retinal image into one of 7 disease categories
+      including 5 DR severity levels, glaucoma suspect, and AMD.
+      Provide a confidence score.
+    objective: Accurate multi-class disease classification
+    grader: grade_task2
+    grader_module: env.graders
+    score_range: [0.0, 1.0]
+    partial_credit: true
+    action_space:
+      disease_label:
+        type: string
+        enum:
+          - normal
+          - mild_dr
+          - moderate_dr
+          - severe_dr
+          - proliferative_dr
+          - glaucoma_suspect
+          - amd
+      confidence:
+        type: float
+        range: [0.0, 1.0]
+
+  - id: hard
+    name: Full patient workflow
+    difficulty: hard
+    description: >
+      Perform a complete clinical AI workflow: classify disease,
+      determine urgency level, generate a clinical recommendation,
+      and produce a patient report summary.
+    objective: End-to-end clinical decision support
+    grader: grade_task3
+    grader_module: env.graders
+    score_range: [0.0, 1.0]
+    action_space:
+      disease_label:
+        type: string
+        enum:
+          - normal
+          - mild_dr
+          - moderate_dr
+          - severe_dr
+          - proliferative_dr
+          - glaucoma_suspect
+          - amd
+      urgency:
+        type: string
+        enum: [monitor, refer, urgent]
+      recommendation:
+        type: string
+        description: Clinical recommendation for next steps
+      report_summary:
+        type: string
+        description: Brief patient-facing report summary
+
+observation_space:
+  task_level:
+    type: string
+    description: Current task difficulty level
+  patient_id:
+    type: string
+    description: Unique patient identifier
+  patient_age:
+    type: integer
+    description: Patient age in years
+  diabetes_years:
+    type: integer
+    nullable: true
+    description: Years since diabetes diagnosis (null if no diabetes)
+  image_description:
+    type: string
+    description: >
+      Textual description of retinal fundus image features,
+      simulating output from AEVIS ESP32-CAM + AI pre-processor
+  previous_actions:
+    type: array
+    description: History of actions taken in current episode
+  step_number:
+    type: integer
+  task_complete:
+    type: boolean
+
+reward:
+  type: float
+  range: [0.0, 1.0]
+  components:
+    - accuracy: Grader score (main signal)
+    - efficiency_bonus: Reward for correct answer on first step
+    - safety_penalty: Penalty for missing urgent pathology
+    - completeness_bonus: Bonus for complete workflow (hard task only)
+
+dataset:
+  source: Simulated cases based on APTOS 2019 retinal dataset descriptions
+  total_cases: 20
+  label_distribution:
+    normal: 4
+    mild_dr: 3
+    moderate_dr: 4
+    severe_dr: 2
+    proliferative_dr: 3
+    glaucoma_suspect: 2
+    amd: 2
+
+deployment:
+  api_base_url_env: API_BASE_URL
+  model_name_env: MODEL_NAME
+  hf_token_env: HF_TOKEN
+  inference_script: inference.py
+  max_runtime_minutes: 20
+  huggingface_space: aevis-openenv
