@@ -159,9 +159,9 @@ def run_task(task_level: str, n_cases: int, seed: int) -> dict:
         if not action:
             # Failed to get action
             log_step(step=1, action="null", reward=0.00, done=True, error=error or "empty action")
-            log_end(success=False, steps=1, score=0.000, rewards=[0.00])
-            all_rewards.append(0.0)
-            all_scores.append(0.0)
+            log_end(success=False, steps=1, score=0.001, rewards=[0.001])
+            all_rewards.append(0.001)
+            all_scores.append(0.001)
             continue
 
         try:
@@ -170,7 +170,7 @@ def run_task(task_level: str, n_cases: int, seed: int) -> dict:
             done = result["done"]
             step_error = None
         except Exception as e:
-            reward_val = 0.0
+            reward_val = 0.001
             done = True
             step_error = str(e)
 
