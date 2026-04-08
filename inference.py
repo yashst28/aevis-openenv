@@ -9,13 +9,18 @@ Usage:
     python inference.py
 
 Runtime: < 20 minutes (uses 20 cases per task level = 60 total)
+
+STDOUT FORMAT (mandatory):
+    [START] task=<task_name> env=<benchmark> model=<model_name>
+    [STEP]  step=<n> action=<action_str> reward=<0.00> done=<true|false> error=<msg|null>
+    [END]   success=<true|false> steps=<n> score=<score> rewards=<r1,r2,...,rn>
 """
 
 import os
 import json
 import time
-import random
 import sys
+from typing import Optional, List
 from openai import OpenAI
 from env.aevis_env import AEVISEnv
 from env.patient_loader import PATIENT_CASES
@@ -26,8 +31,24 @@ MODEL_NAME   = os.environ.get("MODEL_NAME", "llama-3.3-70b-versatile")
 HF_TOKEN     = os.environ.get("HF_TOKEN", "")
 SEED         = 42
 CASES_PER_TASK = min(20, len(PATIENT_CASES))
+BENCHMARK    = "aevis-openenv"
+SUCCESS_THRESHOLD = 0.5
 
 client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN or "sk-placeholder")
+
+# ── Mandatory log functions ───────────────────────────────────────
+
+def log_start(task: str, env: str, model: str) -> None:
+    print(f"[START] task={task} env={env} model={model}", flush=True)
+
+def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]) -> None:
+    error_val = error if error else "null"
+    done_val = str(done).lower()
+    print(f"[STEP] step={step} action={action} reward={reward:.2f} done={done_val} error={error_val}", flush=True)
+
+def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
+    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+    print(f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}", flush=True)
 
 # ── Agent prompts ─────────────────────────────────────────────────
 
@@ -92,14 +113,14 @@ def build_patient_info(obs: dict) -> str:
     return f"Age {age}, {dm_str}"
 
 
-def call_agent(task_level: str, obs: dict) -> dict:
-    """Call the LLM agent and parse its JSON response."""
+def call_agent(task_level: str, obs: dict) -> tuple:
+    """Call the LLM agent and parse its JSON response. Returns (action_dict, error_str)."""
     patient_info = build_patient_info(obs)
     prompt = TASK_PROMPTS[task_level].format(
         patient_info=patient_info,
         image_description=obs["image_description"],
     )
-
+    raw = ""
     try:
         response = client.chat.completions.create(
             model=MODEL_NAME,
@@ -111,82 +132,89 @@ def call_agent(task_level: str, obs: dict) -> dict:
             max_tokens=400,
         )
         raw = response.choices[0].message.content.strip()
-        # Strip markdown fences if present
         raw = raw.replace("```json", "").replace("```", "").strip()
-        return json.loads(raw)
+        return json.loads(raw), None
     except json.JSONDecodeError as e:
-        print(f"  [WARN] JSON parse error: {e} | Raw: {raw[:100]}")
-        return {}
+        return {}, f"JSON parse error: {e}"
     except Exception as e:
-        print(f"  [ERROR] API call failed: {e}")
-        return {}
+        return {}, f"API error: {e}"
 
 
 def run_task(task_level: str, n_cases: int, seed: int) -> dict:
-    """Run the agent through n_cases for a given task level."""
-    print(f"\n{'='*60}")
-    print(f"  Task: {task_level.upper()}  |  Cases: {n_cases}  |  Model: {MODEL_NAME}")
-    print(f"{'='*60}")
-
+    """Run the agent through n_cases for a given task level with mandatory logging."""
     env = AEVISEnv(task_level=task_level, seed=seed)
-    scores = []
-    results = []
+    all_rewards = []
+    all_scores = []
 
     for i in range(n_cases):
+        rewards_this_ep = []
         obs = env.reset()
         patient_id = obs["patient_id"]
-        print(f"  [{i+1:02d}/{n_cases}] Patient {patient_id} ... ", end="", flush=True)
+        task_name = f"{task_level}-{patient_id}"
 
-        action = call_agent(task_level, obs)
+        log_start(task=task_name, env=BENCHMARK, model=MODEL_NAME)
+
+        action, error = call_agent(task_level, obs)
 
         if not action:
-            print("FAILED (empty action) → score: 0.000")
-            scores.append(0.0)
-            results.append({"patient_id": patient_id, "score": 0.0, "action": {}, "feedback": "Agent returned empty response."})
+            # Failed to get action
+            log_step(step=1, action="null", reward=0.00, done=True, error=error or "empty action")
+            log_end(success=False, steps=1, score=0.000, rewards=[0.00])
+            all_rewards.append(0.0)
+            all_scores.append(0.0)
             continue
 
-        result = env.step(action)
-        reward = result["reward"]
-        score = reward["score"]
-        scores.append(score)
+        try:
+            result = env.step(action)
+            reward_val = result["reward"]["score"]
+            done = result["done"]
+            step_error = None
+        except Exception as e:
+            reward_val = 0.0
+            done = True
+            step_error = str(e)
 
-        print(f"score: {score:.3f}")
-        if score < 0.5:
-            print(f"         Feedback: {reward['feedback'][:120]}")
+        rewards_this_ep.append(reward_val)
 
-        results.append({
-            "patient_id": patient_id,
-            "score": score,
-            "action": action,
-            "feedback": reward["feedback"],
-            "breakdown": reward.get("breakdown", {}),
-        })
+        # Sanitize action for single-line logging
+        action_str = json.dumps(action).replace("\n", " ")
+
+        log_step(
+            step=1,
+            action=action_str,
+            reward=reward_val,
+            done=done,
+            error=step_error,
+        )
+
+        episode_score = reward_val
+        success = episode_score >= SUCCESS_THRESHOLD
+
+        log_end(
+            success=success,
+            steps=1,
+            score=episode_score,
+            rewards=rewards_this_ep,
+        )
+
+        all_rewards.append(reward_val)
+        all_scores.append(episode_score)
 
         time.sleep(0.3)  # rate limit buffer
 
-    avg = sum(scores) / len(scores) if scores else 0.0
-    print(f"\n  Average score ({task_level}): {avg:.3f}")
-    print(f"  Min: {min(scores):.3f}  |  Max: {max(scores):.3f}")
+    avg = sum(all_scores) / len(all_scores) if all_scores else 0.0
 
     return {
         "task_level": task_level,
         "n_cases": n_cases,
         "average_score": round(avg, 4),
-        "min_score": round(min(scores), 4),
-        "max_score": round(max(scores), 4),
-        "scores": scores,
-        "results": results,
+        "min_score": round(min(all_scores), 4) if all_scores else 0.0,
+        "max_score": round(max(all_scores), 4) if all_scores else 0.0,
+        "scores": all_scores,
     }
 
 
 def main():
-    print("\n" + "="*60)
-    print("  AEVIS OpenEnv — Inference Script")
-    print(f"  Model:    {MODEL_NAME}")
-    print(f"  Endpoint: {API_BASE_URL}")
-    print(f"  Seed:     {SEED}")
-    print("="*60)
-
     all_results = {}
 
     for task in ("easy", "medium", "hard"):
@@ -194,21 +222,9 @@ def main():
         all_results[task] = task_result
 
     # ── Summary ───────────────────────────────────────────────────
-    print("\n" + "="*60)
-    print("  FINAL BASELINE SCORES")
-    print("="*60)
-    total_scores = []
-    for task, res in all_results.items():
-        avg = res["average_score"]
-        total_scores.append(avg)
-        bar = "█" * int(avg * 20) + "░" * (20 - int(avg * 20))
-        print(f"  {task.upper():8s}  {bar}  {avg:.4f}")
-
+    total_scores = [r["average_score"] for r in all_results.values()]
     overall = sum(total_scores) / len(total_scores)
-    print(f"\n  OVERALL AVERAGE:  {overall:.4f}")
-    print("="*60)
 
-    # Save results
     output = {
         "model": MODEL_NAME,
         "endpoint": API_BASE_URL,
@@ -225,7 +241,6 @@ def main():
 
     with open("baseline_scores.json", "w") as f:
         json.dump(output, f, indent=2)
-    print("\n  Results saved to baseline_scores.json")
 
 
 if __name__ == "__main__":
