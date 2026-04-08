@@ -1,0 +1,9 @@
+[project]
+name = "aevis-openenv"
+version = "1.0.0"
+description = "AI retinal disease screening environment for OpenEnv"
+requires-python = ">=3.11"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.backends.legacy:build"
