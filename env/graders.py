@@ -1,6 +1,6 @@
 """
 AEVIS OpenEnv — Grader functions for Tasks 1, 2, 3.
-All graders return a float between 0.0 and 1.0.
+All graders return a float strictly between 0.0 and 1.0 (exclusive).
 Graders use partial credit — they never return the same value for all inputs.
 """
 
@@ -19,10 +19,15 @@ SEVERITY_ORDER = [
 NON_DR_LABELS = {"glaucoma_suspect", "amd"}
 
 
+def clamp_score(score: float) -> float:
+    """Ensure score is strictly between 0 and 1, never exactly 0.0 or 1.0"""
+    return max(0.001, min(0.999, score))
+
+
 def grade_task1(action: Action, ground_truth: dict) -> tuple[float, str]:
     """
     Task 1 — Binary screening: normal vs refer.
-    Returns (score 0.0–1.0, feedback string).
+    Returns (score strictly in (0,1), feedback string).
     """
     gt_label = ground_truth["ground_truth_label"]
     gt_urgency = ground_truth["ground_truth_urgency"]
@@ -32,40 +37,37 @@ def grade_task1(action: Action, ground_truth: dict) -> tuple[float, str]:
     agent_refers = action.screening_result == "refer"
 
     if action.screening_result is None:
-        return 0.0, "No screening result provided. Must be 'normal' or 'refer'."
+        return clamp_score(0.0), "No screening result provided. Must be 'normal' or 'refer'."
 
     if action.screening_result not in ("normal", "refer"):
-        return 0.0, f"Invalid screening result '{action.screening_result}'. Use 'normal' or 'refer'."
+        return clamp_score(0.0), f"Invalid screening result '{action.screening_result}'. Use 'normal' or 'refer'."
 
     if agent_refers == should_refer:
-        # Correct decision
         if gt_urgency == "urgent" and agent_refers:
-            return 1.0, "Correct. Urgent case correctly flagged for referral."
+            return clamp_score(1.0), "Correct. Urgent case correctly flagged for referral."
         elif not should_refer:
-            return 1.0, "Correct. Normal retina correctly identified — no referral needed."
+            return clamp_score(1.0), "Correct. Normal retina correctly identified — no referral needed."
         else:
-            return 1.0, "Correct. Pathology detected, referral recommended."
+            return clamp_score(1.0), "Correct. Pathology detected, referral recommended."
     else:
         if should_refer and not agent_refers:
-            # False negative — dangerous miss
             if gt_urgency == "urgent":
-                return 0.0, "Critical miss. Urgent pathology labelled as normal. Patient at risk of blindness."
+                return clamp_score(0.0), "Critical miss. Urgent pathology labelled as normal. Patient at risk of blindness."
             else:
-                return 0.1, "Missed pathology. Disease present but labelled normal."
+                return clamp_score(0.1), "Missed pathology. Disease present but labelled normal."
         else:
-            # False positive — over-referral
-            return 0.3, "False positive. Normal retina referred unnecessarily. Acceptable but inefficient."
+            return clamp_score(0.3), "False positive. Normal retina referred unnecessarily. Acceptable but inefficient."
 
 
 def grade_task2(action: Action, ground_truth: dict) -> tuple[float, str]:
     """
     Task 2 — DR severity grading (5-class + glaucoma + AMD).
-    Partial credit: exact match = 1.0, off-by-one = 0.6, off-by-two = 0.3, wrong category = 0.0.
+    Partial credit: exact match = 0.999, off-by-one = 0.6, off-by-two = 0.3, wrong category = 0.001.
     """
     gt_label = ground_truth["ground_truth_label"]
 
     if action.disease_label is None:
-        return 0.0, "No disease label provided."
+        return clamp_score(0.0), "No disease label provided."
 
     pred = action.disease_label.lower().strip()
 
@@ -73,7 +75,6 @@ def grade_task2(action: Action, ground_truth: dict) -> tuple[float, str]:
         score = 1.0
         feedback = f"Perfect classification. Correctly identified as '{gt_label}'."
     elif gt_label in SEVERITY_ORDER and pred in SEVERITY_ORDER:
-        # Both are DR labels — partial credit based on severity distance
         gt_idx = SEVERITY_ORDER.index(gt_label)
         pred_idx = SEVERITY_ORDER.index(pred)
         distance = abs(gt_idx - pred_idx)
@@ -87,7 +88,6 @@ def grade_task2(action: Action, ground_truth: dict) -> tuple[float, str]:
             score = 0.1
             feedback = f"Severity grade far off. True: '{gt_label}', Predicted: '{pred}'."
     elif gt_label in NON_DR_LABELS and pred in NON_DR_LABELS:
-        # Both non-DR but wrong specific condition
         score = 0.4
         feedback = f"Correct disease category but wrong specific condition. True: '{gt_label}', Predicted: '{pred}'."
     elif gt_label == "normal" and pred != "normal":
@@ -97,14 +97,12 @@ def grade_task2(action: Action, ground_truth: dict) -> tuple[float, str]:
         score = 0.0
         feedback = f"False negative. '{gt_label}' missed and labelled normal."
     else:
-        # Wrong disease category entirely
         score = 0.0
         feedback = f"Wrong disease category. True: '{gt_label}', Predicted: '{pred}'."
 
     # Confidence bonus/penalty
     if action.confidence is not None and score > 0:
         if score == 1.0 and action.confidence >= 0.8:
-            score = min(1.0, score + 0.0)  # already max
             feedback += f" High confidence ({action.confidence:.0%}) on correct prediction."
         elif score == 1.0 and action.confidence < 0.5:
             score = 0.85
@@ -113,7 +111,7 @@ def grade_task2(action: Action, ground_truth: dict) -> tuple[float, str]:
             score = max(0.0, score - 0.1)
             feedback += f" Overconfident ({action.confidence:.0%}) on incorrect prediction."
 
-    return round(score, 3), feedback
+    return clamp_score(round(score, 3)), feedback
 
 
 def grade_task3(action: Action, ground_truth: dict) -> tuple[float, str]:
@@ -148,7 +146,6 @@ def grade_task3(action: Action, ground_truth: dict) -> tuple[float, str]:
     feedbacks.append(f"[Report] {_report_feedback(report_score)}")
 
     total = round(sum(scores.values()), 3)
-    breakdown_feedback = " | ".join(feedbacks)
     final_feedback = (
         f"Total score: {total:.3f} | "
         f"Classification: {label_score:.2f} (×0.4) | "
@@ -157,7 +154,7 @@ def grade_task3(action: Action, ground_truth: dict) -> tuple[float, str]:
         f"Report: {report_score:.2f} (×0.1)"
     )
 
-    return total, final_feedback
+    return clamp_score(total), final_feedback
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -197,7 +194,6 @@ def _grade_recommendation(recommendation: str, gt_label: str, gt_urgency: str) -
     rec = recommendation.lower()
     score = 0.3  # base for having any recommendation
 
-    # Check for relevant keywords
     if gt_urgency == "urgent":
         if any(w in rec for w in ["urgent", "immediate", "emergency", "same day", "today"]):
             score += 0.5
@@ -214,7 +210,7 @@ def _grade_recommendation(recommendation: str, gt_label: str, gt_urgency: str) -
         if any(w in rec for w in ["lifestyle", "diet", "sugar", "blood"]):
             score += 0.2
 
-    return min(1.0, score)
+    return min(0.999, score)
 
 
 def _recommendation_feedback(score: float) -> str:
