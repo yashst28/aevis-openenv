@@ -39,34 +39,42 @@ def get_env(task_level: str) -> AEVISEnv:
 # ── Request / Response models ─────────────────────────────────────
 
 class ResetRequest(BaseModel):
-    task_level: str = "easy"
+    task_level: Optional[str] = "easy"
     seed: Optional[int] = 42
+
+    model_config = {"extra": "allow"}
 
 
 class StepRequest(BaseModel):
-    task_level: str = "easy"
-    action: dict
+    task_level: Optional[str] = "easy"
+    action: Optional[dict] = {}
+
+    model_config = {"extra": "allow"}
 
 
 # ── Endpoints ─────────────────────────────────────────────────────
 
 @app.get("/health", status_code=200)
 def health():
-    """Health check — returns 200 if service is running."""
     return {"status": "ok", "service": "AEVIS OpenEnv"}
 
 
 @app.post("/reset", status_code=200)
-def reset(request: ResetRequest):
+async def reset(request: Optional[ResetRequest] = None):
     """
-    Reset the environment for a given task level.
-    Returns the first observation.
+    Reset the environment. Accepts empty body or JSON with task_level and seed.
     """
-    if request.task_level not in ("easy", "medium", "hard"):
-        raise HTTPException(status_code=400, detail="task_level must be 'easy', 'medium', or 'hard'")
+    if request is None:
+        request = ResetRequest()
 
-    env = AEVISEnv(task_level=request.task_level, seed=request.seed)
-    _envs[request.task_level] = env
+    task_level = request.task_level or "easy"
+    seed = request.seed if request.seed is not None else 42
+
+    if task_level not in ("easy", "medium", "hard"):
+        task_level = "easy"
+
+    env = AEVISEnv(task_level=task_level, seed=seed)
+    _envs[task_level] = env
     obs = env.reset()
 
     return {
@@ -77,20 +85,22 @@ def reset(request: ResetRequest):
 
 
 @app.post("/step", status_code=200)
-def step(request: StepRequest):
+async def step(request: StepRequest):
     """
     Submit an action and receive reward + next observation.
     """
-    if request.task_level not in _envs:
-        raise HTTPException(
-            status_code=400,
-            detail="Environment not initialised. Call /reset first."
-        )
+    task_level = request.task_level or "easy"
 
-    env = get_env(request.task_level)
+    if task_level not in _envs:
+        # Auto-reset if not initialised
+        env = AEVISEnv(task_level=task_level, seed=42)
+        _envs[task_level] = env
+        env.reset()
+
+    env = get_env(task_level)
 
     try:
-        result = env.step(request.action)
+        result = env.step(request.action or {})
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -99,7 +109,6 @@ def step(request: StepRequest):
 
 @app.get("/state", status_code=200)
 def state(task_level: str = "easy"):
-    """Return the current environment state."""
     if task_level not in _envs:
         return {"status": "not_initialised", "task_level": task_level}
     env = get_env(task_level)
@@ -108,7 +117,6 @@ def state(task_level: str = "easy"):
 
 @app.get("/tasks", status_code=200)
 def list_tasks():
-    """List all available tasks with descriptions."""
     return {
         "tasks": [
             {
