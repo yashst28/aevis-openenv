@@ -16,6 +16,8 @@ try:
 except ImportError:
     from models import AEVISAction, AEVISObservation, AEVISState
 
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "env"))
 from patient_loader import PATIENT_CASES
 from graders import grade_task1, grade_task2, grade_task3
 
