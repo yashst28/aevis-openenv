@@ -1,9 +1,19 @@
 """
 AEVIS OpenEnv — Server-side environment extending openenv-core Environment.
+All imports use sys.path manipulation to find env/ folder correctly.
 """
 import random
+import sys
+import os
 from typing import Optional
-from uuid import uuid4
+
+# Add root and env/ to path
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_ENV = os.path.join(_ROOT, "env")
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+if _ENV not in sys.path:
+    sys.path.insert(0, _ENV)
 
 try:
     from openenv.core.env_server.interfaces import Environment
@@ -16,10 +26,8 @@ try:
 except ImportError:
     from models import AEVISAction, AEVISObservation, AEVISState
 
-import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "env"))
-from patient_loader import PATIENT_CASES
-from graders import grade_task1, grade_task2, grade_task3
+from env.patient_loader import PATIENT_CASES
+from env.graders import grade_task1, grade_task2, grade_task3
 
 
 def clamp_score(score: float) -> float:
@@ -61,23 +69,17 @@ def compute_reward(task_level: str, action: AEVISAction, ground_truth: dict, ste
 
     raw = grader_score + efficiency_bonus - safety_penalty + completeness_bonus
     final = clamp_score(round(raw, 3))
-
     return {"score": final, "feedback": feedback, "is_terminal": True}
 
 
 class AEVISEnvironment(Environment):
-    """
-    AEVIS retinal screening environment server-side implementation.
-    Extends openenv-core Environment base class.
-    """
-
     def __init__(self):
         self._rng = random.Random(42)
-        self._current_case: Optional[dict] = None
-        self._step_count: int = 0
-        self._episode_done: bool = False
-        self._history: list = []
-        self._task_level: str = "easy"
+        self._current_case = None
+        self._step_count = 0
+        self._episode_done = False
+        self._history = []
+        self._task_level = "easy"
         try:
             super().__init__()
         except Exception:
@@ -98,7 +100,6 @@ class AEVISEnvironment(Environment):
             raise RuntimeError("Call reset() before step().")
         if self._episode_done:
             raise RuntimeError("Episode done. Call reset().")
-
         self._step_count += 1
         reward = compute_reward(self._task_level, action, self._current_case, self._step_count)
         self._episode_done = reward["is_terminal"]
