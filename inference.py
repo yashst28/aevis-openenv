@@ -13,7 +13,7 @@ Runtime: < 20 minutes (uses 20 cases per task level = 60 total)
 STDOUT FORMAT (mandatory):
     [START] task=<task_name> env=<benchmark> model=<model_name>
     [STEP]  step=<n> action=<action_str> reward=<0.00> done=<true|false> error=<msg|null>
-    [END]   success=<true|false> steps=<n> rewards=<r1,r2,...,rn>
+    [END]   success=<true|false> steps=<n> score=<score> rewards=<r1,r2,...,rn>
 """
 
 import os
@@ -157,7 +157,8 @@ def run_task(task_level: str, n_cases: int, seed: int) -> dict:
         action, error = call_agent(task_level, obs)
 
         if not action:
-            log_step(step=1, action="null", reward=0.001, done=True, error=error or "empty action")
+            # Failed to get action
+            log_step(step=1, action="null", reward=0.00, done=True, error=error or "empty action")
             log_end(success=False, steps=1, rewards=[0.001])
             all_rewards.append(0.001)
             all_scores.append(0.001)
@@ -176,7 +177,7 @@ def run_task(task_level: str, n_cases: int, seed: int) -> dict:
         rewards_this_ep.append(reward_val)
 
         # Sanitize action for single-line logging
-        action_str = json.dumps(action).replace("\n", " ").replace('"', "'")
+        action_str = json.dumps(action).replace("\n", " ")
 
         log_step(
             step=1,
@@ -219,6 +220,7 @@ def main():
         task_result = run_task(task, CASES_PER_TASK, SEED)
         all_results[task] = task_result
 
+    # ── Summary ───────────────────────────────────────────────────
     total_scores = [r["average_score"] for r in all_results.values()]
     overall = sum(total_scores) / len(total_scores)
 
