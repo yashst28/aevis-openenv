@@ -98,7 +98,7 @@ def compute_reward(
 
     # ── Final score ───────────────────────────────────────────────
     raw_score = grader_score + efficiency_bonus - safety_penalty + completeness_bonus
-    final_score = max(0.0, min(1.0, round(raw_score, 3)))
+    final_score = max(0.001, min(0.999, round(raw_score, 3)))
 
     breakdown["final_score"] = final_score
     full_feedback = " | ".join(feedback_parts)
